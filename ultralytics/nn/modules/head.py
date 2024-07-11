@@ -3,6 +3,7 @@
 
 import copy
 import math
+import json
 
 import torch
 import torch.nn as nn
@@ -55,9 +56,15 @@ class Detect(nn.Module):
 
         for i in range(self.nl):
             x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
+            print(f"\nThe intermediate x[i]: {x[i].shape}")
         if self.training:  # Training path
             return x
+        print(f"\nThe intermediate x: {len(x)}")
+        print("")
+
         y = self._inference(x)
+
+        print("\nforward print is here!")
         return y if self.export else (y, x)
 
     def forward_end2end(self, x):
@@ -84,11 +91,23 @@ class Detect(nn.Module):
         y = self.postprocess(y.permute(0, 2, 1), self.max_det, self.nc)
         return y if self.export else (y, {"one2many": x, "one2one": one2one})
 
+    def save_as_json(self, tensor, filename):
+        """Save tensor as a JSON file."""
+        tensor_list = tensor.cpu().numpy().tolist()  # Convert tensor to list
+        with open(filename, 'w') as f:
+            json.dump(tensor_list, f)
+
     def _inference(self, x):
         """Decode predicted bounding boxes and class probabilities based on multiple-level feature maps."""
         # Inference path
         shape = x[0].shape  # BCHW
         x_cat = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
+        self.save_as_json(x_cat, 'yolo8_x_cat.json')
+
+        # My modifications
+        print(f"Shape of x_cat: {x_cat.shape}")  # Display the shape of x_cat
+        # print(f"Tensor x_cat: {x_cat}")  # Display x_cat
+
         if self.dynamic or self.shape != shape:
             self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
             self.shape = shape
@@ -98,6 +117,15 @@ class Detect(nn.Module):
             cls = x_cat[:, self.reg_max * 4 :]
         else:
             box, cls = x_cat.split((self.reg_max * 4, self.nc), 1)
+
+        self.save_as_json(box, 'yolo8_box.json')
+        self.save_as_json(cls, 'yolo8_cls.json')
+
+        # My modifications
+        print(f"Shape of box: {box.shape}")  # Display the shape of box
+        # print(f"Tensor box: {box}")  # Display box
+        print(f"Shape of cls: {cls.shape}")  # Display the shape of cls
+        # print(f"Tensor cls: {cls}")  # Display cls
 
         if self.export and self.format in {"tflite", "edgetpu"}:
             # Precompute normalization factor to increase numerical stability
@@ -110,6 +138,16 @@ class Detect(nn.Module):
         else:
             dbox = self.decode_bboxes(self.dfl(box), self.anchors.unsqueeze(0)) * self.strides
 
+        # My modifications
+        print(f"\nShape of dfl(box): {self.dfl(box).shape}")  # Display the shape of dfl(box)
+        print(f"Shape of dbox: {dbox.shape}")  # Display the shape of dbox
+        print(f"Shape of cls: {cls.shape}")  # Display the shape of cls
+
+        my_dbox = torch.cat((dbox, cls.sigmoid()), 1)
+        print(f"Shape of my_dbox: {my_dbox.shape}")  # Display the shape of my_dbox
+        print(f"The sigmoid of cls: {cls.sigmoid()}")
+
+        print("\n_inference print is here!")
         return torch.cat((dbox, cls.sigmoid()), 1)
 
     def bias_init(self):
